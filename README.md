@@ -1,3 +1,85 @@
+# Reprovisioner
+
+`external-provisioner` with templated names for provisioned PV's instead of UUIDs.
+
+## Motivation
+
+Allows local PersistentVolumes to persist across edge Kubernetes reinstallations.
+Confirmed to work with OpenEBS LocalPV-ZFS, as it reuses pre-existing physical volumes based on their assigned names.
+
+Implemented as a targeted patch compatible with upstream versions 3.x through 5.x.
+
+## Usage
+
+Deploy [OpenEBS LocalPV-ZFS](https://github.com/openebs/zfs-localpv) with reprovisioner:
+```yaml
+zfsController:
+  provisioner:
+    image:
+      registry: ghcr.io/
+      repository: anoxape/csi-provisioner
+      tag: v5.2.0-r1
+```
+
+Enable reprovisioner and configure name template:
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: zfs-tank
+provisioner: zfs.csi.openebs.io
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  fstype: zfs
+  poolname: tank/k8s/v
+  external-reprovisioner.anoxape.org/enabled: "true"
+  external-reprovisioner.anoxape.org/volume-name: ${pvc.annotations['home.arpa/volume-name']}
+```
+
+Add custom annotation:
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: foo
+  namespace: bar
+  annotations:
+    home.arpa/volume-name: foobar
+spec:
+  storageClassName: zfs-tank
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+Expect provisioned:
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: foobar
+...
+```
+
+```yaml
+apiVersion: zfs.openebs.io/v1
+kind: ZFSVolume
+metadata:
+  name: foobar
+  namespace: system
+...
+```
+
+## Options
+
+Supported tokens for name resolution:
+- `${pvc.namespace}`
+- `${pvc.name}`
+- `${pvc.annotations['ANNOTATION_KEY']}`
+
 # CSI provisioner
 
 The external-provisioner is a sidecar container that dynamically provisions volumes by calling `CreateVolume` and `DeleteVolume` functions of CSI drivers. It is necessary because internal persistent volume controller running in Kubernetes controller-manager does not have any direct interfaces to CSI drivers.

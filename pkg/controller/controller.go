@@ -102,6 +102,12 @@ const (
 	prefixedNodeExpandSecretNameKey      = csiParameterPrefix + "node-expand-secret-name"
 	prefixedNodeExpandSecretNamespaceKey = csiParameterPrefix + "node-expand-secret-namespace"
 
+	reprovisionerParameterPrefix = "external-reprovisioner.anoxape.org/"
+
+	reprovisionerEnabledKey    = reprovisionerParameterPrefix + "enabled"
+	reprovisionerEnabledValue  = "true"
+	reprovisionerVolumeNameKey = reprovisionerParameterPrefix + "volume-name"
+
 	// [Deprecated] CSI Parameters that are put into fields but
 	// NOT stripped from the parameters passed to CreateVolume
 	provisionerSecretNameKey      = "csiProvisionerSecretName"
@@ -470,6 +476,40 @@ func makeVolumeName(prefix, pvcUID string, volumeNameUUIDLength int) (string, er
 	return fmt.Sprintf("%s-%s", prefix, strings.Replace(string(pvcUID), "-", "", -1)[0:volumeNameUUIDLength]), nil
 }
 
+// makeTemplatedVolumeName returns a name formatted according to given nameTemplate
+//
+// supported tokens for name resolution:
+// - ${pvc.namespace}
+// - ${pvc.name}
+// - ${pvc.annotations['ANNOTATION_KEY']}
+//
+// an error is returned in the following situations:
+// - the nameTemplate contains a token that cannot be resolved
+// - the resolved name is not a valid persistent volume name
+func makeTemplatedVolumeName(nameTemplate string, pvc *v1.PersistentVolumeClaim) (string, error) {
+	nameParams := map[string]string{}
+	if pvc != nil {
+		nameParams[tokenPVCNameKey] = pvc.Name
+		nameParams[tokenPVCNameSpaceKey] = pvc.Namespace
+		for k, v := range pvc.Annotations {
+			nameParams["pvc.annotations['"+k+"']"] = v
+		}
+	}
+	resolvedName, err := resolveTemplate(nameTemplate, nameParams)
+	if err != nil {
+		return "", fmt.Errorf("error resolving value %q: %v", nameTemplate, err)
+	}
+	// TODO: better validation
+	if len(validation.IsDNS1123Subdomain(resolvedName)) > 0 {
+		if nameTemplate != resolvedName {
+			return "", fmt.Errorf("%q resolved to %q which is not a valid volume name", nameTemplate, resolvedName)
+		}
+		return "", fmt.Errorf("%q is not a valid volume name", nameTemplate)
+	}
+
+	return resolvedName, nil
+}
+
 func getAccessTypeBlock() *csi.VolumeCapability_Block {
 	return &csi.VolumeCapability_Block{
 		Block: &csi.VolumeCapability_BlockVolume{},
@@ -630,6 +670,16 @@ func (p *csiProvisioner) prepareProvision(ctx context.Context, claim *v1.Persist
 	if err != nil {
 		return nil, controller.ProvisioningFinished, err
 	}
+	if sc.Parameters[reprovisionerEnabledKey] == reprovisionerEnabledValue {
+		pvNameTemplate, ok := sc.Parameters[reprovisionerVolumeNameKey]
+		if !ok {
+			return nil, controller.ProvisioningFinished, fmt.Errorf("missing volume name parameter \"%s\"", reprovisionerVolumeNameKey)
+		}
+		pvName, err = makeTemplatedVolumeName(pvNameTemplate, claim)
+	}
+	if err != nil {
+		return nil, controller.ProvisioningFinished, err
+	}
 
 	fsTypesFound := 0
 	fsType := ""
@@ -744,6 +794,11 @@ func (p *csiProvisioner) prepareProvision(ctx context.Context, claim *v1.Persist
 	req.Parameters, err = removePrefixedParameters(sc.Parameters)
 	if err != nil {
 		return nil, controller.ProvisioningFinished, fmt.Errorf("failed to strip CSI Parameters of prefixed keys: %v", err)
+	}
+
+	req.Parameters, err = removeReprovisionerParameters(req.Parameters)
+	if err != nil {
+		return nil, controller.ProvisioningFinished, fmt.Errorf("failed to strip Reprovisioner Parameters of prefixed keys: %v", err)
 	}
 
 	if p.extraCreateMetadata {
@@ -1022,6 +1077,23 @@ func removePrefixedParameters(param map[string]string) (map[string]string, error
 		} else {
 			// Don't strip, add this key-value to new map
 			// Deprecated parameters prefixed with "csi" are not stripped to preserve backwards compatibility
+			newParam[k] = v
+		}
+	}
+	return newParam, nil
+}
+
+func removeReprovisionerParameters(param map[string]string) (map[string]string, error) {
+	newParam := map[string]string{}
+	for k, v := range param {
+		if strings.HasPrefix(k, reprovisionerParameterPrefix) {
+			switch k {
+			case reprovisionerEnabledKey:
+			case reprovisionerVolumeNameKey:
+			default:
+				return map[string]string{}, fmt.Errorf("found unknown parameter key \"%s\" with reserved namespace %s", k, reprovisionerParameterPrefix)
+			}
+		} else {
 			newParam[k] = v
 		}
 	}
