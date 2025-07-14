@@ -105,9 +105,9 @@ const (
 
 	reprovisionerParameterPrefix = "external-reprovisioner.anoxape.org/"
 
-	reprovisionerEnabledKey    = reprovisionerParameterPrefix + "enabled"
-	reprovisionerEnabledValue  = "true"
-	reprovisionerVolumeNameKey = reprovisionerParameterPrefix + "volume-name"
+	reprovisionerEnabledKey            = reprovisionerParameterPrefix + "enabled"
+	reprovisionerEnabledValue          = "true"
+	reprovisionerVolumeNameTemplateKey = reprovisionerParameterPrefix + "volume-name-template"
 
 	// [Deprecated] CSI Parameters that are put into fields but
 	// NOT stripped from the parameters passed to CreateVolume
@@ -672,9 +672,9 @@ func (p *csiProvisioner) prepareProvision(ctx context.Context, claim *v1.Persist
 		return nil, controller.ProvisioningFinished, err
 	}
 	if sc.Parameters[reprovisionerEnabledKey] == reprovisionerEnabledValue {
-		pvNameTemplate, ok := sc.Parameters[reprovisionerVolumeNameKey]
+		pvNameTemplate, ok := sc.Parameters[reprovisionerVolumeNameTemplateKey]
 		if !ok {
-			return nil, controller.ProvisioningFinished, fmt.Errorf("missing volume name parameter \"%s\"", reprovisionerVolumeNameKey)
+			return nil, controller.ProvisioningFinished, fmt.Errorf("missing volume name template parameter \"%s\"", reprovisionerVolumeNameTemplateKey)
 		}
 		pvName, err = makeTemplatedVolumeName(pvNameTemplate, claim)
 	}
@@ -1090,7 +1090,7 @@ func removeReprovisionerParameters(param map[string]string) (map[string]string, 
 		if strings.HasPrefix(k, reprovisionerParameterPrefix) {
 			switch k {
 			case reprovisionerEnabledKey:
-			case reprovisionerVolumeNameKey:
+			case reprovisionerVolumeNameTemplateKey:
 			default:
 				return map[string]string{}, fmt.Errorf("found unknown parameter key \"%s\" with reserved namespace %s", k, reprovisionerParameterPrefix)
 			}

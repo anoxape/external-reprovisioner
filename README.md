@@ -18,7 +18,7 @@ zfsController:
     image:
       registry: ghcr.io/
       repository: anoxape/csi-provisioner
-      tag: v5.2.0-r1
+      tag: v5.3.0-r1
 ```
 
 Enable reprovisioner and configure name template:
@@ -34,7 +34,7 @@ parameters:
   fstype: zfs
   poolname: tank/k8s/v
   external-reprovisioner.anoxape.org/enabled: "true"
-  external-reprovisioner.anoxape.org/volume-name: ${pvc.annotations['home.arpa/volume-name']}
+  external-reprovisioner.anoxape.org/volume-name-template: ${pvc.annotations['home.arpa/volume-name']}
 ```
 
 Add custom annotation:
